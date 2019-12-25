@@ -1,0 +1,11 @@
+*.txt*
+*.sum
+*.doc
+*.bpe
+*.gz
+*.npz
+*tar*
+__pycache__
+.ipynb_checkpoints
+
+cnndm-pj/vocab
