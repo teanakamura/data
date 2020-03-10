@@ -33,6 +33,9 @@ def parse():
     parent_parser.add_argument('--truncate', dest='trun',
         default = 400,
         help = 'truncate words.')
+    parent_parser.add_argument('--workers',
+        default = 32,
+        help = 'the number of parallelisms')
     
     parser = argparse.ArgumentParser(description='', parents=[parent_parser])
     subparsers = parser.add_subparsers(description='annotation pattern', dest='annt')
@@ -58,6 +61,9 @@ def parse():
     key_parser.add_argument('--keypath', dest='keypath', 
         default = Default.keypath,
         help = 'source keyword directory.')
+    key_parser.add_argument('-s', '--separated-annotation', dest='separated_annotation',
+        action = 'store_true',
+        help = 'anntotaion by separated file')
     return parser.parse_args()
 
 # from easydict import EasyDict
@@ -111,6 +117,45 @@ class StopwordAnnt():
                              if w in sset and not w in self.sw else w 
                              for w in doc.split()[:args.trun]])
 
+class SeparatedTfidfNgramAnnt():
+    def __init__(self, preprocess):
+        self.sp = spacy.load('en')
+        self.preprocess = preprocess
+    def __call__(self, sumdoc, keys):
+        summ, doc = self.preprocess(sumdoc)
+
+        sp_doc = self.sp(doc.rstrip())
+        doc = ' '.join(map(lambda t: t.text, sp_doc))
+
+        first_word_dict = defaultdict(list)
+        keys = keys.rstrip()
+        if keys:
+            for vk in keys.split(', '):
+                v, *ks = vk.split()
+                if float(v) < 0.05:
+                    break
+                first_word_dict[ks[0]].append(ks)
+
+        tmp = []
+        res = ['0'] * len(sp_doc)
+        cnt = 0
+        while cnt < len(sp_doc):
+            token = sp_doc[cnt] if not tmp else tmp.pop() #it.__next__()
+            if token.lemma_ in first_word_dict:
+                for key in first_word_dict[token.lemma_]:
+                    for i in range(len(key)):
+                        if cnt+i == len(sp_doc) or not sp_doc[cnt+i].lemma_ == key[i]:
+                            break
+                    else:
+                        res[cnt:cnt+len(key)] = ['1'] * len(key)
+                        cnt += len(key)
+                        break
+                else:
+                    cnt += 1
+            else:
+                cnt += 1
+        return summ, doc, ' '.join(res)
+
 class TfidfNgramAnnt():
     def __init__(self, preprocess):
         self.sp = spacy.load('en')
@@ -154,6 +199,8 @@ class TfidfNgramAnnt():
                                 out_list.append(tmp.pop().text)
                             res.append(f'## {" ".join(out_list)} ###')
                             break
+                else:
+                    res.append(token.text)
             else:
                 res.append(token.text)
         return summ, ' '.join(res)
@@ -161,13 +208,15 @@ class TfidfNgramAnnt():
 class ProcessFunc():
     def __init__(self, processor):
         self.processor = processor
-    def __call__(self, so, ke, start, end, returned_sum, returned_doc, pnum):
+    def __call__(self, so, ke, start, end, returned_sum, returned_doc, returned_sep, pnum):
         for sumdoc, keys, idx in zip(so[start:end], ke[start:end], range(start, end)):
             if pnum == 0:
                 print(f'process0: {idx+1:>{self.digits}}/{self.size_pp}', end='\r', flush=True)  # flushしないと表示されないことがある．
-            summ, doc = self.processor(sumdoc, keys)
+            summ, doc, *rest = self.processor(sumdoc, keys)
             returned_sum[idx] = summ
             returned_doc[idx] = doc
+            if returned_sep and rest:
+                returned_sep[idx] = rest[0]
     def set_size_pp(self, size_pp):
         self.size_pp = size_pp
         self.digits = len(str(size_pp))
@@ -220,25 +269,31 @@ if __name__ == '__main__':
         processor = StopwordAnnt(processor, f'{data_dir}/{args.stoppath}', args.lemma)
     elif args.annt == 'keyword':
         if args.key == 'tfidf':
-            processor = TfidfNgramAnnt(processor)
+            if args.separated_annotation:
+                processor = SeparatedTfidfNgramAnnt(processor)
+            else:
+                processor = TfidfNgramAnnt(processor)
     processfunc = ProcessFunc(processor)
 
-    modes = ['test','val', 'train']
+    # modes = ['test','val', 'train']
+    modes = ['test']
     totaltime = 0
     for mode in modes:
-        size = None if args.full else 100
+        size = None if args.full else 20
         source_txt = f'{source_dir}/{mode}.txt'
         dest_sum = f'{dest_dir}/{mode}.sum'
         dest_doc = f'{dest_dir}/{mode}.doc'
+        dest_sep = f'{dest_dir}/{mode}.sep' if args.separated_annotation else None
         # key_txt = f'{data_dir}/{args.keypath}/{mode}.txt' if getattr(args, 'keypath', None) else None
-        key_txt = f'{data_dir}/{args.keypath}/{mode}_sumfilter.txt' if getattr(args, 'keypath', None) else None
+        # key_txt = f'{data_dir}/{args.keypath}/{mode}_sumfilter.txt' if getattr(args, 'keypath', None) else None
+        key_txt = f'{data_dir}/{args.keypath}/{mode}_sumdifffilter.txt' if getattr(args, 'keypath', None) else None
         
         with open(source_txt) as so:
             n_lines = len(so.readlines())
         
         size = min(size, n_lines) if size else n_lines
         print(f'{mode}: total size: {size}')
-        num_process = 32
+        num_process = int(args.workers)
         process_list = []
         size_pp = (size-1) // num_process + 1  ## size per process
         processfunc.set_size_pp(size_pp)
@@ -251,11 +306,15 @@ if __name__ == '__main__':
             ke_list = m.list(list(ke))
             returned_sum = m.list([None]*size)
             returned_doc = m.list([None]*size)
+            if args.separated_annotation:
+                returned_sep = m.list([None]*size)
+            else:
+                returned_sep = None
             t1 = time()
             for i in range(num_process):
                 start = size_pp*i
                 end = min(size_pp*(i+1), size)
-                p = Process(target=processfunc, args=(so_list, ke_list, start, end, returned_sum, returned_doc, i))
+                p = Process(target=processfunc, args=(so_list, ke_list, start, end, returned_sum, returned_doc, returned_sep, i))
                 p.start()
                 process_list.append(p)
             for p in process_list:
@@ -264,6 +323,9 @@ if __name__ == '__main__':
             print()
             ds.write('\n'.join(returned_sum).rstrip() + '\n')  ## wc -l で数えやすくするため
             dd.write('\n'.join(returned_doc).rstrip() + '\n')
+            if args.separated_annotation:
+                with open(dest_sep, 'w') as dsep:
+                    dsep.write('\n'.join(returned_sep).rstrip() + '\n')
         totaltime += t2-t1
     print(totaltime)
 
