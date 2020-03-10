@@ -1,11 +1,13 @@
 *.txt*
 *.sum
 *.doc
+*.sep
 *.bpe
 *.gz
 *.npz
 *tar*
 __pycache__
 .ipynb_checkpoints
+Untitled*.ipynb
 
 cnndm-pj/vocab
