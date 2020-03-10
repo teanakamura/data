@@ -18,6 +18,7 @@ fi
 
 if [ $1 = apply ] || [ $1 = 'apply-all' ]; then
   CODES=${SUBWORD_DIR}/codes${NUM_OPERATIONS}.txt
+  #CODES=~/Data/cnndm-pj/full/tfidf_annt/subword-nmt/codes${NUM_OPERATIONS}.txt
   DROPOUT=0.1
   #GLOOSSARIES="'<s>' '</s>' '<summ-content>'"
   GLOOSSARIES="'<t>' '</t>'"
@@ -66,6 +67,10 @@ case $1 in
       exit 1
     fi
     subword-nmt get-vocab < ${SUBWORD_DIR}/$2 | wc -l
+    ;;
+  rename-all)
+    cd ${SUBWORD_DIR}
+    rename s/.bpe//g ./*
     ;;
   *) echo "input learn, apply or apply-all";;
 esac
