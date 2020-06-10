@@ -16,8 +16,10 @@ class Default():
     dest_suf = ''
     keyword_pattern = 'tfidf'
     keypath = 'keyword/tfidf/from_doc_ngram'
+    keysuf = 'sumfilter'
     lemmapath = 'lemmatize'
     stoppath = 'keyword/stopwords.txt'
+    threshold = 0.05
     
 def parse():
     parent_parser = argparse.ArgumentParser(description='', add_help=False)
@@ -61,9 +63,15 @@ def parse():
     key_parser.add_argument('--keypath', dest='keypath', 
         default = Default.keypath,
         help = 'source keyword directory.')
+    key_parser.add_argument('--keysuf', dest='keysuf',
+        default = Default.keysuf,
+        help = 'source keyword file suffix.')
     key_parser.add_argument('-s', '--separated-annotation', dest='separated_annotation',
         action = 'store_true',
         help = 'anntotaion by separated file')
+    key_parser.add_argument('--threshold', dest='threshold',
+        default = Default.threshold,
+        help = 'tfidf keyword filtering threshold.')
     return parser.parse_args()
 
 # from easydict import EasyDict
@@ -118,9 +126,10 @@ class StopwordAnnt():
                              for w in doc.split()[:args.trun]])
 
 class SeparatedTfidfNgramAnnt():
-    def __init__(self, preprocess):
+    def __init__(self, preprocess, threshold):
         self.sp = spacy.load('en')
         self.preprocess = preprocess
+        self.threshold = float(threshold)
     def __call__(self, sumdoc, keys):
         summ, doc = self.preprocess(sumdoc)
 
@@ -132,7 +141,7 @@ class SeparatedTfidfNgramAnnt():
         if keys:
             for vk in keys.split(', '):
                 v, *ks = vk.split()
-                if float(v) < 0.05:
+                if float(v) < self.threshold:
                     break
                 first_word_dict[ks[0]].append(ks)
 
@@ -157,9 +166,10 @@ class SeparatedTfidfNgramAnnt():
         return summ, doc, ' '.join(res)
 
 class TfidfNgramAnnt():
-    def __init__(self, preprocess):
+    def __init__(self, preprocess, threshold):
         self.sp = spacy.load('en')
         self.preprocess = preprocess
+        self.threshold = float(threshold)
     def __call__(self, sumdoc, keys):
         summ, doc = self.preprocess(sumdoc)
 
@@ -169,7 +179,7 @@ class TfidfNgramAnnt():
         if keys:
             for vk in keys.split(', '):
                 v, *ks = vk.split()
-                if float(v) < 0.05:
+                if float(v) < self.threshold:
                     break
                 first_word_dict[ks[0]].append(ks)
 
@@ -270,13 +280,12 @@ if __name__ == '__main__':
     elif args.annt == 'keyword':
         if args.key == 'tfidf':
             if args.separated_annotation:
-                processor = SeparatedTfidfNgramAnnt(processor)
+                processor = SeparatedTfidfNgramAnnt(processor, args.threshold)
             else:
-                processor = TfidfNgramAnnt(processor)
+                processor = TfidfNgramAnnt(processor, args.threshold)
     processfunc = ProcessFunc(processor)
 
-    # modes = ['test','val', 'train']
-    modes = ['test']
+    modes = ['test','val', 'train']
     totaltime = 0
     for mode in modes:
         size = None if args.full else 20
@@ -284,9 +293,7 @@ if __name__ == '__main__':
         dest_sum = f'{dest_dir}/{mode}.sum'
         dest_doc = f'{dest_dir}/{mode}.doc'
         dest_sep = f'{dest_dir}/{mode}.sep' if args.separated_annotation else None
-        # key_txt = f'{data_dir}/{args.keypath}/{mode}.txt' if getattr(args, 'keypath', None) else None
-        # key_txt = f'{data_dir}/{args.keypath}/{mode}_sumfilter.txt' if getattr(args, 'keypath', None) else None
-        key_txt = f'{data_dir}/{args.keypath}/{mode}_sumdifffilter.txt' if getattr(args, 'keypath', None) else None
+        key_txt = f'{data_dir}/{args.keypath}/{mode}{"_"*bool(args.keysuf)}{args.keysuf}.txt' if getattr(args, 'keypath', None) else None
         
         with open(source_txt) as so:
             n_lines = len(so.readlines())
