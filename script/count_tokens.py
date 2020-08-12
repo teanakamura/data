@@ -8,6 +8,7 @@ def parse():
             default = 'cnndm-pj')
     parser.add_argument('--subword', '-s',
             action = 'store_true')
+    parser.add_argument('--data-path', '-p')
     return parser.parse_args()
 
 def get_data_path(args):
@@ -21,7 +22,7 @@ def get_data_path(args):
 if __name__ == '__main__':
     args = parse()
     print(args)
-    data_path = get_data_path(args)
+    data_path = args.data_path or get_data_path(args)
     print(data_path)
     
     modes = ['train', 'val', 'test']
